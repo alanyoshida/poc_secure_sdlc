@@ -1,0 +1,3 @@
+# Argo Events para a PoC (ver design.md D4)
+# Defaults do chart ja instalam os controladores de EventBus/EventSource/Sensor.
+# O EventSource webhook e o Sensor do gate sao criados via manifests na secao 4.

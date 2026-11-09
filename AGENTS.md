@@ -8,7 +8,14 @@ PoC de SDLC seguro local: cluster kind contendo GitLab CE, GitLab Runner, Argo W
 
 ## Estado atual
 
-**Fase de planejamento.** Não existe código de implementação ainda — apenas os artefatos OpenSpec da change `setup-secure-sdlc-poc`. A implementação deve seguir o checklist em `openspec/changes/setup-secure-sdlc-poc/tasks.md`.
+**Implementação completa e verificada (22/22 tasks).** O ambiente sobe do
+zero com `make bootstrap` (idempotente; componentes instalados por
+`scripts/bootstrap.sh` + helm values em `helm/`) e é destruído com
+`make teardown`; o pipeline ponta a ponta (push limpo passa, push com
+secret falha) foi validado após teardown + bootstrap completos. A change
+`setup-secure-sdlc-poc` está pronta para revisão/arquivamento (specs
+sincronizam para `openspec/specs/`). Ver `README.md` para acessos,
+credenciais e notas de implementação.
 
 ## Workflow OpenSpec
 

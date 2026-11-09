@@ -1,0 +1,32 @@
+# RBAC dos job pods do runner (executor kubernetes, design D3)
+# A ServiceAccount permite que o job de gate consulte o status dos
+# Workflows do Argo via API do Kubernetes, sem credenciais extras.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gitlab-runner-job
+  namespace: cicd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gitlab-runner-job
+  namespace: cicd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitlab-runner-job
+  namespace: cicd
+subjects:
+  - kind: ServiceAccount
+    name: gitlab-runner-job
+    namespace: cicd
+roleRef:
+  kind: Role
+  name: gitlab-runner-job
+  apiGroup: rbac.authorization.k8s.io

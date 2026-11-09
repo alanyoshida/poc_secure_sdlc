@@ -1,0 +1,47 @@
+# Pipeline da PoC de SDLC seguro: gate de secrets bloqueante ANTES do
+# build (design.md D4). A credencial do Harbor chega como variavel de CI
+# HARBOR_REGISTRY_AUTH (base64 de usuario:senha, mascarada - base64 nao
+# tem $, evitando interpolacao do runner/shell no username robot$apps+ci).
+stages:
+  - security-gate
+  - build
+  - push
+
+variables:
+  # repo de clone pelo Service interno (a external_url nip.io nao resolve no cluster)
+  REPO_URL_INTERNAL: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181/root/demo-app.git"
+  GATE_POLL_INTERVAL: "10"
+  GATE_POLL_TIMEOUT: "300"
+
+security-gate:
+  stage: security-gate
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl jq >/dev/null
+  script:
+    - sh ci/gate-poll.sh "$REPO_URL_INTERNAL" "$CI_COMMIT_SHA"
+
+.buildx: &buildx
+  image: docker:27.5.1
+  before_script:
+    # DOCKER_CONFIG e injetado pelo runner apontando para outro diretorio:
+    # forcar o caminho que escrevemos, senao o push sai anonimo (401)
+    - export DOCKER_CONFIG="$HOME/.docker"
+    - |
+      mkdir -p "$DOCKER_CONFIG"
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$HARBOR_REGISTRY" "$HARBOR_REGISTRY_AUTH" > "$DOCKER_CONFIG/config.json"
+    - docker buildx create --name remote --driver remote tcp://buildkitd.cicd.svc.cluster.local:1234
+
+build:
+  <<: *buildx
+  stage: build
+  script:
+    # build sem export: valida o Dockerfile contra o daemon remoto; o
+    # push reaproveita tudo do cache do buildkitd (PVC)
+    - docker buildx build --builder remote --output type=cacheonly .
+
+push:
+  <<: *buildx
+  stage: push
+  script:
+    - docker buildx build --builder remote --push -t "$HARBOR_REGISTRY/apps/demo-app:$CI_COMMIT_SHORT_SHA" .

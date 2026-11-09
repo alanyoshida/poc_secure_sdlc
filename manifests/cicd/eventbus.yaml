@@ -1,0 +1,10 @@
+# EventBus jetstream default do namespace cicd (Argo Events >= 1.7 usa
+# spec.jetstream; o antigo spec.native foi removido)
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: cicd
+spec:
+  jetstream:
+    version: 2.10.29

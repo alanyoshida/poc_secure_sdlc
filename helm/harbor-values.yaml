@@ -1,0 +1,37 @@
+# Harbor para a PoC (ver design.md D6)
+# Sem TLS: trafego restrito ao cluster. externalURL aponta para o nome
+# interno para que o realm de token do registry funcione in-cluster
+# (o no do kind resolve via /etc/hosts - ver `make node-hosts`).
+expose:
+  type: nodePort
+  tls:
+    enabled: false
+  nodePort:
+    name: harbor
+    ports:
+      http:
+        port: 80
+        nodePort: 30002
+
+externalURL: http://harbor-core.harbor.svc.cluster.local
+harborAdminPassword: Harbor12345
+
+trivy:
+  enabled: true
+
+persistence:
+  enabled: true
+  persistentVolumeClaim:
+    registry:
+      size: 5Gi
+    jobservice:
+      size: 1Gi
+    database:
+      size: 2Gi
+    redis:
+      size: 1Gi
+    trivy:
+      size: 2Gi
+
+metrics:
+  enabled: false

@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: poc-secure-sdlc
+containerdConfigPatches:
+  # Harbor registry interno via nginx (HTTP, apenas trafego in-cluster)
+  # O service harbor-registry:5000 e reservado aos componentes internos do
+  # Harbor (htpasswd); push/pull de usuarios passam pelo nginx na porta 80.
+  - |-
+    [plugins.'io.containerd.cri.v1.images'.registry.mirrors."harbor.harbor.svc.cluster.local"]
+      endpoint = ["http://harbor.harbor.svc.cluster.local"]
+nodes:
+  - role: control-plane

@@ -1,0 +1,15 @@
+# Argo Workflows para a PoC (ver design.md D3/D4)
+# Workflows (gate gitleaks) executam no namespace cicd, junto do Runner e
+# do buildkitd; a SA dos jobs consulta o status via API do Kubernetes.
+controller:
+  workflowNamespaces:
+    - cicd
+
+server:
+  # PoC local: sem SSO, acesso restrito ao port-forward do host
+  authMode: server
+  insecure: true
+
+# Sem repositorio de artefatos: o gate le status via API e o scan imprime
+# no stdout do container; archiveLogs fica desligado na PoC.
+artifactRepository: {}

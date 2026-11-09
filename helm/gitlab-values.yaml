@@ -1,0 +1,60 @@
+# Instalacao enxuta do GitLab CE para a PoC (ver design.md D2)
+# Chaves conferidas contra gitlab/gitlab chart 9.11.16 (GitLab 18.11)
+# Chart 9.x usado porque o 10.x exige PostgreSQL externo; o 9.x traz
+# postgresql, redis e minio embutidos, mantendo a PoC enxuta (design D2)
+installCertmanager: false
+
+# Exigido pelo subchart certmanager-issuer mesmo sem TLS (PoC sem ingress)
+certmanager-issuer:
+  email: poc@example.com
+
+global:
+  edition: ce
+  hosts:
+    domain: 127.0.0.1.nip.io
+    https: false
+  ingress:
+    enabled: false
+    configureCertmanager: false
+  kas:
+    enabled: false
+
+nginx-ingress:
+  enabled: false
+
+prometheus:
+  install: false
+
+registry:
+  enabled: false
+
+# Runner sera instalado separadamente no namespace cicd (task 2.3)
+gitlab-runner:
+  install: false
+
+gitlab:
+  webservice:
+    minReplicas: 1
+    maxReplicas: 1
+    workerProcesses: 2
+    ingress:
+      enabled: false
+    service:
+      type: NodePort
+      nodePort: 30800
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+  sidekiq:
+    minReplicas: 1
+    maxReplicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+  gitaly:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi

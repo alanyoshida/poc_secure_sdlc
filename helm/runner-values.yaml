@@ -1,0 +1,22 @@
+# GitLab Runner - executor kubernetes (design D3)
+# runnerToken NAO fica neste arquivo (segredo); e passado via --set
+# pelo script de bootstrap a partir do token criado na API do GitLab.
+gitlabUrl: http://gitlab-webservice-default.gitlab.svc:8181/
+
+concurrent: 4
+
+rbac:
+  create: true
+  clusterWideAccess: false
+
+runners:
+  config: |
+    [[runners]]
+      name = "poc-kubernetes"
+      # Jobs clonam pelo Service interno (a external_url nip.io nao resolve no cluster)
+      clone_url = "http://gitlab-webservice-default.gitlab.svc:8181/"
+      [runners.kubernetes]
+        namespace = "cicd"
+        privileged = false
+        service_account = "gitlab-runner-job"
+        image = "alpine:3.20"

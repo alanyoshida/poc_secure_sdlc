@@ -1,0 +1,95 @@
+# BuildKit rootless (design.md D5)
+# Daemon remoto para os jobs de build (docker buildx --driver remote).
+# Roda como uid 1000, sem privileged e sem acesso a socket de runtime.
+#
+# Imagem: variante de moby/buildkit:v0.34.2-rootless com newuidmap/
+# newgidmap setuid root-owned (camada anexada via crane; gerada no
+# bootstrap, ver README). Necessario porque o rootlesskit usa o mapa
+# multi-faixa de subuids do /etc/subuid, e o newuidmap precisa de setuid
+# efetivo - volumes k8s sao montados nosuid, entao a correcao tem que
+# estar no proprio filesystem da imagem.
+# O PVC mantem o cache de camadas entre builds (spec: Cache de build
+# persistente, capability container-build-pipeline).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: buildkitd-cache
+  namespace: cicd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: cicd
+data:
+  buildkitd.toml: |
+    # Registry HTTP do Harbor (sem TLS, trafego restrito ao cluster)
+    [registry."harbor.harbor.svc.cluster.local"]
+      http = true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkitd
+  namespace: cicd
+spec:
+  selector:
+    app: buildkitd
+  ports:
+    - name: grpc
+      port: 1234
+      targetPort: 1234
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: cicd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: buildkitd
+  template:
+    metadata:
+      labels:
+        app: buildkitd
+    spec:
+      imagePullSecrets:
+        - name: harbor-pull
+      containers:
+        - name: buildkitd
+          image: harbor.harbor.svc.cluster.local/apps/buildkitd:v0.34.2-rootless-idtools
+          args:
+            - --oci-worker-no-process-sandbox
+            - --addr
+            - tcp://0.0.0.0:1234
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: Unconfined
+          readinessProbe:
+            tcpSocket:
+              port: 1234
+          ports:
+            - containerPort: 1234
+          volumeMounts:
+            - name: cache
+              mountPath: /home/user/.local/share/buildkit
+            - name: config
+              mountPath: /home/user/.config/buildkit
+              readOnly: true
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: buildkitd-cache
+        - name: config
+          configMap:
+            name: buildkitd-config

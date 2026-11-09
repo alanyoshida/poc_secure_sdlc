@@ -1,0 +1,59 @@
+# WorkflowTemplate do gate de secrets (ver design.md D4)
+# Clona o repo no SHA informado (credencial read_repository do Secret
+# gitlab-repo-read, task 2.4) e roda o gitleaks com regras default.
+# O container principal herda o emptyDir do init container de clone.
+# gitleaks retorna exit 1 se encontrar leaks -> Workflow falha (fail-closed).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: gitleaks-scan
+  namespace: cicd
+spec:
+  entrypoint: scan
+  serviceAccountName: workflow
+  arguments:
+    parameters:
+      - name: repo_url
+        value: ""
+      - name: sha
+        value: ""
+  templates:
+    - name: scan
+      inputs:
+        parameters:
+          - name: repo_url
+          - name: sha
+      activeDeadlineSeconds: 300
+      initContainers:
+        - name: clone
+          image: alpine/git:v2.45.2
+          command: [sh, -c]
+          args:
+            - |
+              git config --global credential.helper '!f() { echo username=oauth2; echo password=$GIT_TOKEN; }; f'
+              git clone --quiet "$REPO_URL" /work
+              git -C /work checkout --quiet "$SHA"
+          env:
+            - name: REPO_URL
+              value: "{{inputs.parameters.repo_url}}"
+            - name: SHA
+              value: "{{inputs.parameters.sha}}"
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-repo-read
+                  key: token
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      container:
+        image: zricethezav/gitleaks:v8.24.3
+        command: [sh, -c]
+        args:
+          - gitleaks git /work --verbose --redact --no-banner
+        volumeMounts:
+          - name: work
+            mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
