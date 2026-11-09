@@ -122,6 +122,39 @@ externa do projeto.
   ([`docs/ROADMAP.md`](docs/ROADMAP.md)) junto da assinatura com cosign.
 - Eventos `merge`, `close` e `approval` não disparam scan.
 
+### Code review de MR por LLM (OpenCodeReview)
+
+O mesmo evento de MR também dispara em paralelo o Workflow **`mr-code-review`**:
+o [OpenCodeReview](https://github.com/alibaba/open-code-review) (`ocr`,
+versão fixada) revisa o diff do MR (`--from origin/main --to <sha>`, modo
+merge-base) com um LLM **OpenAI-compatível** e publica o resultado direto no
+MR — **discussões inline por linha do diff + nota resumo** (via
+`post_review.py` oficial, vendido em `scripts/post_review.py`).
+
+Configuração necessária (Secret com o endpoint do LLM):
+
+```bash
+kubectl create secret generic ocr-llm -n cicd \
+  --from-literal=llm_url=https://openrouter.ai/api/v1/chat/completions \
+  --from-literal=auth_token=<sua-chave> \
+  --from-literal=model=<modelo> \
+  --from-literal=use_anthropic=false
+```
+
+- Alternativa: coloque as chaves `llm_url`, `llm_api_key`, `llm_model`,
+  `llm_provider` num `.env` na raiz do repo — o bootstrap cria o Secret a
+  partir dele (a URL recebe o sufixo `/chat/completions` automaticamente).
+  O `.env` está no `.gitignore` — **nunca commitado**.
+- **Política de bloqueio**: o workflow falha apenas quando o review reporta
+  achado `critical` (`OCR_FAIL_ON_SEVERITY`); demais severidades são
+  consultivas.
+- **Credenciais segregadas**: LLM no Secret `ocr-llm`; publicação usa o PAT
+  dedicado `mr-review-poster` (escopo `api`, recriado pelo bootstrap); o
+  clone continua no token `read_repository`.
+- **Custo**: cada review consome tokens do provedor configurado; reviews só
+  disparam em eventos relevantes de MR (mesmo filtro do gate).
+- Sem o Secret, o workflow falha rápido com o comando de criação no log.
+
 ## Notas de implementação
 
 - **Imagem do buildkitd**: `apps/buildkitd:v0.34.2-rootless-idtools` é uma

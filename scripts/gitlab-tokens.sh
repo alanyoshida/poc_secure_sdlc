@@ -63,4 +63,18 @@ else
     --from-literal=user=oauth2 --from-literal=token="$READ" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 fi
+
+# --- mr-review-poster (publica o review da LLM no MR; escopo api) ---
+# Dedicado ao fluxo de review: o token de clone nao pode postar e o admin
+# nao deve circular no fluxo (change mr-llm-code-review).
+if POSTER=$(secret_value gitlab-mr-poster token) && [ -n "$POSTER" ] && token_valid "$POSTER"; then
+  echo "gitlab-mr-poster: reutilizando PAT valido"
+else
+  echo "gitlab-mr-poster: criando PAT"
+  POSTER=$(create_pat 'mr-review-poster' "['api']" 30)
+  [ -n "$POSTER" ] || { echo "falha ao criar PAT mr-review-poster"; exit 1; }
+  kubectl create secret generic gitlab-mr-poster -n cicd \
+    --from-literal=token="$POSTER" --from-literal=user=root \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+fi
 echo "tokens do GitLab prontos"

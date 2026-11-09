@@ -86,12 +86,59 @@ kubectl apply -f manifests/cicd/gitleaks-workflowtemplate.yaml
 kubectl apply -f manifests/cicd/secrets-gate-eventsource.yaml
 kubectl apply -f manifests/cicd/secrets-gate-sensor.yaml
 kubectl apply -f manifests/cicd/secrets-gate-mr-sensor.yaml
+kubectl apply -f manifests/cicd/mr-code-review.yaml
+kubectl create configmap mr-review-glue -n cicd \
+  --from-file=post_review.py=scripts/post_review.py \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl wait --for=condition=Ready pods -l eventsource-name=secrets-gate -n cicd --timeout=5m
 kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate -n cicd --timeout=5m
 kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate-mr -n cicd --timeout=5m
+kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate-mr -n cicd --timeout=5m
 
-step "9/9 repositorio de aplicacao exemplo + variaveis de CI"
+step "9/10 repositorio de aplicacao exemplo + variaveis de CI"
 ./scripts/demo-app-setup.sh
+
+step "10/10 Secret do LLM para o review de MR (ocr-llm)"
+if kubectl get secret ocr-llm -n cicd >/dev/null 2>&1; then
+  echo "Secret ocr-llm: ja presente"
+elif [ -f .env ]; then
+  echo "Secret ocr-llm: criando a partir do .env local"
+  python3 - <<'PY' | kubectl apply -f -
+import json
+vals = {}
+for line in open(".env", encoding="utf-8"):
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    vals[k.strip()] = v.strip().strip('"').strip("'")
+url = vals.get("llm_url", "")
+if url and not url.rstrip("/").endswith("/chat/completions"):
+    url = url.rstrip("/") + "/chat/completions"
+provider = vals.get("llm_provider", "")
+data = {
+    "apiVersion": "v1", "kind": "Secret",
+    "metadata": {"name": "ocr-llm", "namespace": "cicd"}, "type": "Opaque",
+    "stringData": {
+        "llm_url": url,
+        "auth_token": vals.get("llm_api_key", ""),
+        "model": vals.get("llm_model", ""),
+        "use_anthropic": "true" if "anthropic" in provider.lower() else "false",
+        "provider": provider,
+    },
+}
+missing = [k for k, v in data["stringData"].items() if not v and k != "provider"]
+if missing:
+    print("# ERRO: chaves ausentes no .env:", missing); raise SystemExit(1)
+print(json.dumps(data))
+PY
+else
+  echo "AVISO: Secret ocr-llm ausente e sem .env local - o review de MR vai"
+  echo "falhar ate voce cria-lo:"
+  echo "  kubectl create secret generic ocr-llm -n cicd \\"
+  echo "    --from-literal=llm_url=<endpoint>/chat/completions \\"
+  echo "    --from-literal=auth_token=<chave> --from-literal=model=<modelo>"
+fi
 
 kill $PF 2>/dev/null || true
 echo

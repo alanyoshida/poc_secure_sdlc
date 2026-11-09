@@ -1,0 +1,186 @@
+# Code review de MR por LLM via OpenCodeReview (change mr-llm-code-review)
+# Disparado pelo segundo trigger do Sensor secrets-gate-mr. Consultivo
+# (bloqueia apenas quando um achado tem severity critical, via
+# OCR_FAIL_ON_SEVERITY no post_review.py).
+# Requisitos no pod: git >= 2.41 (apk), python3 (glue), npm (ocr fixado).
+# Credenciais: Secret ocr-llm (LLM OpenAI-compativel, criado pelo usuario)
+# e Secret gitlab-mr-poster (PAT api para postar discussões no MR).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: mr-code-review
+  namespace: cicd
+spec:
+  entrypoint: review
+  serviceAccountName: workflow
+  arguments:
+    parameters:
+      - name: repo_url
+        value: ""
+      - name: source_branch
+        value: ""
+      - name: mr_iid
+        value: ""
+      - name: project_id
+        value: ""
+      - name: sha
+        value: ""
+  templates:
+    - name: review
+      inputs:
+        parameters:
+          - name: repo_url
+          - name: source_branch
+          - name: mr_iid
+          - name: project_id
+          - name: sha
+      activeDeadlineSeconds: 1200
+      initContainers:
+        - name: clone
+          image: alpine/git:v2.45.2
+          command: [sh, -c]
+          args:
+            - |
+              git config --global credential.helper '!f() { echo username=oauth2; echo password=$GIT_TOKEN; }; f'
+              git clone --quiet "$REPO_URL" /work
+          env:
+            - name: REPO_URL
+              value: "{{inputs.parameters.repo_url}}"
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitlab-repo-read
+                  key: token
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      container:
+        image: node:22-alpine
+        command: [sh, -c]
+        env:
+          - name: REPO_URL
+            value: "{{inputs.parameters.repo_url}}"
+          - name: SOURCE_BRANCH
+            value: "{{inputs.parameters.source_branch}}"
+          - name: MR_IID
+            value: "{{inputs.parameters.mr_iid}}"
+          - name: PROJECT_ID
+            value: "{{inputs.parameters.project_id}}"
+          - name: SHA
+            value: "{{inputs.parameters.sha}}"
+          # optional: com o Secret ausente as vars ficam vazias e o script
+          # falha com mensagem clara (spec: LLM nao configurado)
+          - name: LLM_URL
+            valueFrom:
+              secretKeyRef:
+                name: ocr-llm
+                key: llm_url
+                optional: true
+          - name: LLM_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: ocr-llm
+                key: auth_token
+                optional: true
+          - name: LLM_MODEL
+            valueFrom:
+              secretKeyRef:
+                name: ocr-llm
+                key: model
+                optional: true
+          - name: USE_ANTHROPIC
+            valueFrom:
+              secretKeyRef:
+                name: ocr-llm
+                key: use_anthropic
+                optional: true
+          - name: GITLAB_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: gitlab-mr-poster
+                key: token
+                optional: true
+          - name: GITLAB_API_URL
+            value: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
+          - name: OCR_FAIL_ON_SEVERITY
+            value: critical
+          - name: OCR_STICKY_SUMMARY
+            value: "true"
+        args:
+          - |
+            set -eu
+            # 1. fail-fast: LLM nao configurado (spec: falha com mensagem clara)
+            # vars de secretKeyRef optional ficam UNSET (nao vazias) sem o Secret
+            if [ -z "${LLM_URL:-}" ] || [ -z "${LLM_AUTH_TOKEN:-}" ] || [ -z "${LLM_MODEL:-}" ]; then
+              echo "ERRO: Secret ocr-llm ausente ou incompleto no namespace cicd."
+              echo "Crie com:"
+              echo "  kubectl create secret generic ocr-llm -n cicd \\"
+              echo "    --from-literal=llm_url=https://openrouter.ai/api/v1/chat/completions \\"
+              echo "    --from-literal=auth_token=<sua-chave> \\"
+              echo "    --from-literal=model=<modelo> \\"
+              echo "    --from-literal=use_anthropic=false"
+              exit 1
+            fi
+            if [ -z "${GITLAB_API_TOKEN:-}" ]; then
+              echo "ERRO: Secret gitlab-mr-poster ausente (PAT escopo api para publicar o review)."
+              exit 1
+            fi
+            # 2. dependencias do pod (git >= 2.41 e python3 para o glue)
+            apk add --no-cache git python3 >/dev/null
+            # 3. OpenCodeReview com versao fixada
+            npm install -g "@alibaba-group/open-code-review@1.13.6" > /out/npm.log 2>&1 \
+              || { tail -20 /out/npm.log; exit 1; }
+            ocr version 2>/dev/null || true
+            # 4. configuracao do LLM (mesma chaves do exemplo oficial de GitLab CI)
+            ocr config set llm.url "$LLM_URL"
+            ocr config set llm.auth_token "$LLM_AUTH_TOKEN"
+            ocr config set llm.model "$LLM_MODEL"
+            ocr config set llm.use_anthropic "${USE_ANTHROPIC:-false}"
+            ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
+            # 5. review do diff do MR (merge-base: main...sha)
+            mkdir -p /out/.ocr
+            echo "review: origin/main...$SHA (branch $SOURCE_BRANCH, MR !$MR_IID)"
+            cd /work
+            set +e
+            ocr review --from origin/main --to "$SHA" --format json --audience agent \
+              --background "MR !${MR_IID}" \
+              > /out/.ocr/ocr-result.json 2> /out/.ocr/ocr-stderr.log
+            OCR_EXIT=$?
+            set -eu
+            echo "OCR_EXIT=$OCR_EXIT"
+            tail -10 /out/.ocr/ocr-stderr.log 2>/dev/null || true
+            head -c 1500 /out/.ocr/ocr-result.json 2>/dev/null || true
+            # 6. publica discussoes inline + nota resumo no MR
+            export CI_SERVER_URL="$GITLAB_API_URL"
+            export CI_PROJECT_ID="$PROJECT_ID"
+            export CI_MERGE_REQUEST_IID="$MR_IID"
+            set +e
+            python3 /glue/post_review.py /out/.ocr/ocr-result.json
+            POST_EXIT=$?
+            set -eu
+            # 7. gate: erro do ocr ou gating de severidade falham o workflow
+            if [ "$OCR_EXIT" != "0" ]; then
+              echo "ocr review falhou com codigo $OCR_EXIT (detalhes no resumo do MR)"
+              exit "$OCR_EXIT"
+            fi
+            if [ "$POST_EXIT" != "0" ]; then
+              echo "publicacao/gating falhou com codigo $POST_EXIT (achado critical?)"
+              exit "$POST_EXIT"
+            fi
+            echo "REVIEW_CONCLUIDO"
+        volumeMounts:
+          - name: work
+            mountPath: /work
+          - name: out
+            mountPath: /out
+          - name: glue
+            mountPath: /glue
+            readOnly: true
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: out
+          emptyDir: {}
+        - name: glue
+          configMap:
+            name: mr-review-glue
