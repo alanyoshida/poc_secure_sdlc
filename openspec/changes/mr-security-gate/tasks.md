@@ -8,7 +8,7 @@
 
 ## 2. GitLab (setting + webhook)
 
-- [ ] 2.1 Habilitar o setting admin `allow_local_requests_from_web_hooks_and_integrations` via API e verificar com `GET /application/settings`
+- [x] 2.1 Habilitar o setting admin de webhooks para rede local via API (o GitLab 18.11 aceita `allow_local_requests_from_web_hooks_and_services`; o nome com `_integrations` foi rejeitado) e verificar com `GET /application/settings`
 - [x] 2.2 Registrar o webhook do projeto `root/demo-app` (eventos de merge request, URL `http://secrets-gate-eventsource-svc.cicd.svc.cluster.local:12000/mr`) de forma idempotente e verificar que o hook responde ao teste manual (payload de push não dispara scan; resposta do endpoint em "Recent deliveries")
 
 ## 3. Bootstrap e documentação
