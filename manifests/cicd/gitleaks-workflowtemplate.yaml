@@ -17,12 +17,18 @@ spec:
         value: ""
       - name: sha
         value: ""
+      # Rastreabilidade: preenchido pelo Sensor secrets-gate-mr quando o
+      # disparo vem de um Merge Request; vazio nos demais disparos
+      - name: mr_iid
+        value: ""
   templates:
     - name: scan
       inputs:
         parameters:
           - name: repo_url
           - name: sha
+          - name: mr_iid
+            default: ""
       activeDeadlineSeconds: 300
       initContainers:
         - name: clone
@@ -50,7 +56,10 @@ spec:
         image: zricethezav/gitleaks:v8.24.3
         command: [sh, -c]
         args:
-          - gitleaks git /work --verbose --redact --no-banner
+          # --log-opts=HEAD restringe o scan ao historico do commit avaliado;
+          # sem isso o gitleaks v8.24 varre TODAS as refs do clone (qualquer
+          # branch abandonada com secret bloquearia scans de SHAs limpos)
+          - gitleaks git /work --verbose --redact --no-banner --log-opts="HEAD"
         volumeMounts:
           - name: work
             mountPath: /work

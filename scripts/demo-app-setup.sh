@@ -58,6 +58,28 @@ for key, val, masked in [
         sys.exit(1)
     print(f"variavel {key}: HTTP {st}")
 
+# --- setting admin: webhooks para URLs de rede local (o endpoint do gate
+# --- e um Service in-cluster; change mr-security-gate) ---
+st, r = api("PUT", "/application/settings",
+            {"allow_local_requests_from_web_hooks_and_services": True})
+print("setting allow_local_requests_from_web_hooks_and_services:", st)
+
+# --- webhook de MR do projeto (idempotente) ---
+HOOK_URL = "http://secrets-gate-eventsource-svc.cicd.svc.cluster.local:12000/mr"
+st, hooks = api("GET", f"/projects/{pid}/hooks")
+hook = next((h for h in hooks if h["url"] == HOOK_URL), None)
+if hook:
+    st, _ = api("PUT", f"/projects/{pid}/hooks/{hook['id']}", {
+        "url": HOOK_URL, "merge_requests_events": True,
+        "push_events": False, "enable_ssl_verification": False})
+    print("webhook de MR: atualizado (id", hook["id"], ") HTTP", st)
+else:
+    st, r = api("POST", f"/projects/{pid}/hooks", {
+        "url": HOOK_URL, "merge_requests_events": True,
+        "push_events": False, "enable_ssl_verification": False,
+        "description": "security gate via Argo Events (mr-security-gate)"})
+    print("webhook de MR: criado (id", r.get("id"), ") HTTP", st)
+
 # --- arquivos (create se novo, update se mudou) ---
 src = "example-app"
 files = [

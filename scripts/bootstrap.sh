@@ -85,8 +85,10 @@ kubectl apply -f manifests/cicd/workflow-rbac.yaml
 kubectl apply -f manifests/cicd/gitleaks-workflowtemplate.yaml
 kubectl apply -f manifests/cicd/secrets-gate-eventsource.yaml
 kubectl apply -f manifests/cicd/secrets-gate-sensor.yaml
+kubectl apply -f manifests/cicd/secrets-gate-mr-sensor.yaml
 kubectl wait --for=condition=Ready pods -l eventsource-name=secrets-gate -n cicd --timeout=5m
 kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate -n cicd --timeout=5m
+kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate-mr -n cicd --timeout=5m
 
 step "9/9 repositorio de aplicacao exemplo + variaveis de CI"
 ./scripts/demo-app-setup.sh

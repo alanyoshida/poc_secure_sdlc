@@ -102,6 +102,26 @@ O pull interno das imagens por pods do cluster usa o mirror HTTP configurado
 no containerd do kind (`containerdConfigPatches` em [`kind.yaml`](kind.yaml))
 + `imagePullSecrets` (`harbor-pull`).
 
+### Validação de Merge Requests (webhook do GitLab)
+
+Abrir, reabrir ou atualizar um MR no GitLab dispara automaticamente o mesmo
+scan de secrets **fora do pipeline**: o webhook do projeto (eventos de
+merge request) chama o endpoint `/mr` do Argo Events, e o Sensor
+`secrets-gate-mr` (que filtra apenas essas ações) instancia o Workflow
+`gitleaks-scan` no SHA do último commit do branch de origem — com o `mr_iid`
+nos parâmetros para correlação. O clone é feito pela URL interna do GitLab
+(construída a partir de `project.path_with_namespace`), independente da URL
+externa do projeto.
+
+- **Onde ver o veredito**: Argo UI (`make urls`) ou
+  `kubectl get workflows -n cicd` — o run do MR carrega `mr_iid=<número>`
+  nos parâmetros; o scan é rápido (~20s).
+- **Limitação atual**: o veredito não é postado de volta no MR (commit
+  status/nota) — o fluxo de scan usa somente o token `read_repository`
+  (privilégio mínimo); publicar resultados está no roadmap
+  ([`docs/ROADMAP.md`](docs/ROADMAP.md)) junto da assinatura com cosign.
+- Eventos `merge`, `close` e `approval` não disparam scan.
+
 ## Notas de implementação
 
 - **Imagem do buildkitd**: `apps/buildkitd:v0.34.2-rootless-idtools` é uma
