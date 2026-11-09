@@ -8,14 +8,16 @@ PoC de SDLC seguro local: cluster kind contendo GitLab CE, GitLab Runner, Argo W
 
 ## Estado atual
 
-**Implementação completa e verificada (22/22 tasks).** O ambiente sobe do
-zero com `make bootstrap` (idempotente; componentes instalados por
-`scripts/bootstrap.sh` + helm values em `helm/`) e é destruído com
-`make teardown`; o pipeline ponta a ponta (push limpo passa, push com
-secret falha) foi validado após teardown + bootstrap completos. A change
-`setup-secure-sdlc-poc` está pronta para revisão/arquivamento (specs
-sincronizam para `openspec/specs/`). Ver `README.md` para acessos,
-credenciais e notas de implementação.
+**PoC implementada, validada e arquivada.** Duas changes concluídas e
+arquivadas (specs sincronizados em `openspec/specs/`):
+`setup-secure-sdlc-poc` (ambiente completo: kind + GitLab CE + Runner +
+Argo + Harbor + BuildKit rootless, pipeline com gate de secrets) e
+`mr-security-gate` (validação de MRs via webhook do GitLab). O ambiente
+sobe do zero com `make bootstrap` (idempotente) e é destruído com
+`make teardown`; pipeline ponta a ponta e validação de MR verificados.
+Ver `README.md` para acessos, credenciais e notas de implementação.
+**Novo trabalho** começa com uma change nova (proposal + specs + design +
+tasks).
 
 ## Workflow OpenSpec
 
