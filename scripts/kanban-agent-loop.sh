@@ -104,7 +104,12 @@ render_desc() { python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("
 slug_of() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-40; }
 
 card_has_tag() { echo "$CARD_TAGS" | tr ',{}' '\n' | grep -qxF "$1"; }
-card_commented() { echo "$CARD_TEXT" | grep -q "/aprovado"; }
+card_commented() {
+  # corpo de comentario no formato "- autor, data: /aprovado..."; o texto
+  # "/aprovado" dentro de outros comentarios (ex.: o aviso do proprio
+  # agente) NAO conta
+  printf '%s\n' "$CARD_TEXT" | grep -qE '^- .*: */aprovado'
+}
 
 mcp_add_comment() { # $1=card id, $2=corpo (payload montado com json.dumps)
   CARD_BODY="$2" python3 - "$AGENT_DIR/mcp-kanzo.py" "$1" <<'PYPATCH'
@@ -130,11 +135,11 @@ while true; do
   log "scan todo: [$CARDS]"
   for CARD_ID in $(printf '%s\n' "$CARDS" | awk '$1 ~ /#/ {print $1}'); do
     CARD_LINE=$(printf '%s\n' "$CARDS" | grep "^$CARD_ID ")
-    CARD_TITLE=$(printf '%s' "$CARD_LINE" | sed -E 's/^([^ ]+) \[[^]]*\] //; s/ \{[^}]*\}$//')
+    CARD_TITLE=$(printf '%s' "$CARD_LINE" | sed -E 's/^([^ ]+) \[[^]]*\] //; s/ \{[^}]*\}$//; s/ \([0-9]+ comments?\)$//')
     CARD_TEXT=$(mcp get_task "{\"id\":\"$CARD_ID\"}")
     CARD_TAGS=$(printf '%s' "$CARD_LINE" | grep -oE '\{[^}]*\}' | tr -d '{}' | head -1)
     card_has_tag "proposta-publicada" && continue
-    CARD_DESC=$(render_desc "$CARD_TEXT")
+    CARD_DESC="$CARD_TEXT"  # contexto completo: titulo, descricao e comentarios
     NUM=${CARD_ID##*#}
     CHANGE_NAME="card-$NUM-$(slug_of "$CARD_TITLE")"
     log "propose: $CARD_ID -> $CHANGE_NAME"
