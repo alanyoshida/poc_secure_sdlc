@@ -1,0 +1,113 @@
+# Agente kanban (change kanban-agent)
+# Loop de polling + opencode + openspec CLI trabalhando no clone do
+# workspace (PVC). Binarios fixados baixados em initContainer; o loop e os
+# prompts vem do ConfigMap kanban-agent-loop (gerado de scripts/ pelo
+# bootstrap). Stateless: estado vive no board (Kanzo) e no git.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kanban-agent-workspace
+  namespace: cicd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kanban-agent
+  namespace: cicd
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # workspace em PVC: uma instancia por vez
+  selector:
+    matchLabels:
+      app: kanban-agent
+  template:
+    metadata:
+      labels:
+        app: kanban-agent
+    spec:
+      initContainers:
+        - name: fetch-tools
+          image: alpine:3.20
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              apk add --no-cache tar curl libstdc++ >/dev/null
+              mkdir -p /tools/bin /tmp/oc /tmp/os
+              curl -sfL "https://github.com/sst/opencode/releases/download/v1.19.5/opencode-linux-x64-musl.tar.gz" -o /tmp/oc.tgz
+              tar -xzf /tmp/oc.tgz -C /tmp/oc
+              find /tmp/oc -name opencode -type f -exec cp {} /tools/bin/opencode \;
+              curl -sfL "https://github.com/Fission-AI/OpenSpec/releases/download/v1.17.0/openspec-linux-x64-musl.tar.gz" -o /tmp/os.tgz
+              tar -xzf /tmp/os.tgz -C /tmp/os
+              find /tmp/os -name openspec -type f -exec cp {} /tools/bin/openspec \;
+              chmod +x /tools/bin/opencode /tools/bin/openspec
+              /tools/bin/opencode --version >/dev/null && /tools/bin/openspec --version >/dev/null && echo TOOLS_OK
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+      containers:
+        - name: agent
+          image: alpine:3.20
+          command: [sh, -c]
+          args:
+            - |
+              apk add --no-cache git curl jq bash python3 libstdc++ >/dev/null
+              exec bash /agent/kanban-agent-loop.sh
+          env:
+            - name: KANZO_MCP_URL
+              value: http://kanzo.cicd.svc.cluster.local:4242/mcp
+            - name: GITLAB_URL
+              value: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
+            - name: PROJECT_SLUG
+              value: agent-workspace
+            - name: REPO_PATH
+              value: root/agent-workspace
+            - name: POLL_INTERVAL
+              value: "30"
+            - name: AGENT_MODEL
+              value: openrouter/deepseek/deepseek-v4.1-flash-1017
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kanban-agent-token
+                  key: token
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-llm
+                  key: auth_token
+                  optional: true
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+            - name: workspace
+              mountPath: /workspace
+            - name: loop
+              mountPath: /agent
+      volumes:
+        - name: tools
+          emptyDir: {}
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: kanban-agent-workspace
+        - name: loop
+          configMap:
+            name: kanban-agent-loop
+            items:
+              - key: kanban-agent-loop.sh
+                path: kanban-agent-loop.sh
+              - key: mcp-kanzo.py
+                path: mcp-kanzo.py
+              - key: propose.md
+                path: prompts/propose.md
+              - key: apply.md
+                path: prompts/apply.md
+              - key: archive.md
+                path: prompts/archive.md

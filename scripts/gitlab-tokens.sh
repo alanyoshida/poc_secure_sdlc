@@ -77,4 +77,15 @@ else
     --from-literal=token="$POSTER" --from-literal=user=root \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 fi
+# --- kanban-agent (agente autonomo do board; push de branch + MR + leitura) ---
+if AGENT=$(secret_value kanban-agent-token token) && [ -n "$AGENT" ] && token_valid "$AGENT"; then
+  echo "kanban-agent-token: reutilizando PAT valido"
+else
+  echo "kanban-agent-token: criando PAT"
+  AGENT=$(create_pat 'kanban-agent' "['api', 'write_repository']" 30)
+  [ -n "$AGENT" ] || { echo "falha ao criar PAT kanban-agent"; exit 1; }
+  kubectl create secret generic kanban-agent-token -n cicd \
+    --from-literal=token="$AGENT" --from-literal=user=root \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+fi
 echo "tokens do GitLab prontos"

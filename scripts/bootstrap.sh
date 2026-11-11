@@ -95,13 +95,48 @@ kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate -n cicd --ti
 kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate-mr -n cicd --timeout=5m
 kubectl wait --for=condition=Ready pods -l sensor-name=secrets-gate-mr -n cicd --timeout=5m
 
-step "9/10 repositorio de aplicacao exemplo + variaveis de CI"
+step "9/11 repositorio de aplicacao exemplo + variaveis de CI"
 ./scripts/demo-app-setup.sh
 
-step "10/10 Secret do LLM para o review de MR (ocr-llm)"
+step "10/11 agente kanban (Kanzo + agente + workspace)"
+kubectl apply -f manifests/cicd/kanzo.yaml
+kubectl rollout status deploy/kanzo -n cicd --timeout=300s
+kubectl create configmap kanban-agent-loop -n cicd \
+  --from-file=kanban-agent-loop.sh=scripts/kanban-agent-loop.sh \
+  --from-file=mcp-kanzo.py=scripts/mcp-kanzo.py \
+  --from-file=propose.md=scripts/agent-prompts/propose.md \
+  --from-file=apply.md=scripts/agent-prompts/apply.md \
+  --from-file=archive.md=scripts/agent-prompts/archive.md \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl apply -f manifests/cicd/kanban-agent.yaml
+kubectl rollout status deploy/kanban-agent -n cicd --timeout=600s
+kubectl -n cicd port-forward svc/kanzo 4242:4242 >/dev/null 2>&1 &
+KANZO_PF=$!
+sleep 4
+./scripts/agent-workspace-setup.sh
+kill $KANZO_PF 2>/dev/null || true
+
+step "11/11 Secrets do LLM (review de MR + agente)"
 if kubectl get secret ocr-llm -n cicd >/dev/null 2>&1; then
   echo "Secret ocr-llm: ja presente"
 elif [ -f .env ]; then
+  echo "Secret agent-llm (agente kanban): criando a partir do .env local"
+  python3 - <<'PY' | kubectl apply -f -
+import json
+vals = {}
+for line in open(".env", encoding="utf-8"):
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    vals[k.strip()] = v.strip().strip('"').strip("'")
+print(json.dumps({
+    "apiVersion": "v1", "kind": "Secret",
+    "metadata": {"name": "agent-llm", "namespace": "cicd"}, "type": "Opaque",
+    "stringData": {"auth_token": vals.get("llm_api_key", ""),
+                   "model": vals.get("llm_model", "")},
+}))
+PY
   echo "Secret ocr-llm: criando a partir do .env local"
   python3 - <<'PY' | kubectl apply -f -
 import json
@@ -133,7 +168,8 @@ if missing:
 print(json.dumps(data))
 PY
 else
-  echo "AVISO: Secret ocr-llm ausente e sem .env local - o review de MR vai"
+  echo "AVISO: Secret ocr-llm ausente e sem .env local - o review de MR e o"
+  echo "agente kanban vao"
   echo "falhar ate voce cria-lo:"
   echo "  kubectl create secret generic ocr-llm -n cicd \\"
   echo "    --from-literal=llm_url=<endpoint>/chat/completions \\"

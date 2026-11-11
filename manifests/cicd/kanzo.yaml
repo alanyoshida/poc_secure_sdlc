@@ -1,0 +1,103 @@
+# Kanzo no cluster (change kanban-agent)
+# Kanban "for humans and agents": board (browser) + MCP server (HTTP) num
+# binario so. Dados (SQLite) no PVC; board do humano via NodePort; o MCP
+# fica no ClusterIP para o pod do agente (change kanban-agent).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kanzo-data
+  namespace: cicd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kanzo
+  namespace: cicd
+spec:
+  selector:
+    app: kanzo
+  ports:
+    - name: http
+      port: 4242
+      targetPort: 4242
+# Board do humano: kubectl -n cicd port-forward deploy/kanzo 4242:4242
+# (o Kanzo valida o header Host - anti DNS-rebinding - e so aceita
+# localhost:4242; NodePort/Host alternativo recebem 403. Programaticamente,
+# clientes in-cluster spoofam Host: localhost:4242.)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kanzo
+  namespace: cicd
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # SQLite no PVC: nao rodar duas replicas no mesmo volume
+  selector:
+    matchLabels:
+      app: kanzo
+  template:
+    metadata:
+      labels:
+        app: kanzo
+    spec:
+      initContainers:
+        - name: fetch-kanzo
+          image: alpine:3.20
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              apk add --no-cache tar xz curl >/dev/null
+              curl -sfL "https://github.com/emanuele-em/kanzo/releases/download/v0.4.1/kanzo-x86_64-unknown-linux-musl.tar.xz" \
+                -o /tmp/kanzo.tar.xz
+              tar -xJf /tmp/kanzo.tar.xz -C /tmp
+              find /tmp -name kanzo -type f -exec cp {} /tools/kanzo \;
+              chmod +x /tools/kanzo
+              /tools/kanzo --help >/dev/null && echo KANZO_OK
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+      containers:
+        - name: kanzo
+          image: alpine:3.20
+          command: [sh, -c]
+          args:
+            - |
+              # bind 0.0.0.0: o board (NodePort) e o MCP HTTP sao acessados
+              # fora do pod; atencao: o Kanzo nao tem login - NodePort
+              # exposto na rede local e postura aceita da PoC
+              mkdir -p /data/kanzo
+              if [ -f /data/kanzo/config.toml ]; then
+                sed -i 's/listen = "127.0.0.1"/listen = "0.0.0.0"/' /data/kanzo/config.toml
+              else
+                printf 'port = 4242\nlisten = "0.0.0.0"\nmcp_http = true\n' > /data/kanzo/config.toml
+              fi
+              exec /tools/kanzo --home /data/kanzo --no-open
+          env:
+            - name: HOME
+              value: /data
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4242
+          ports:
+            - containerPort: 4242
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: tools
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: kanzo-data

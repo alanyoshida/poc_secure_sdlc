@@ -155,6 +155,32 @@ kubectl create secret generic ocr-llm -n cicd \
   disparam em eventos relevantes de MR (mesmo filtro do gate).
 - Sem o Secret, o workflow falha rápido com o comando de criação no log.
 
+### Agente kanban (Kanzo + opencode)
+
+O [Kanzo](https://github.com/emanuele-em/kanzo) roda no cluster (board em
+PVC + MCP HTTP) e um agente (`opencode` + `openspec` CLI em pod próprio)
+executa o mecânico do OpenSpec a partir de cards:
+
+```
+backlog (ideias, agente ignora) --mover--> todo --propose--> review
+   review + /aprovado --> doing --apply + MR--> review
+   MR (gate + LLM review automaticos) --merge humano--> done
+   done = archive da change + commit direto na main (docs-only)
+```
+
+- **Acesso ao board**: `kubectl -n cicd port-forward deploy/kanzo 4242:4242`
+  → http://localhost:4242 (o Kanzo valida o header Host — anti
+  DNS-rebinding — então o acesso é via port-forward, não NodePort)
+- **Para pedir uma change**: crie um card no projeto `agent-workspace` e
+  mova para **todo**; o agente comenta a proposta no card em ~5min
+- **Para aprovar**: comente `/aprovado` no card; o agente aplica e abre o MR
+  (que passa pelo gate + LLM review); **mergeie** para o agente arquivar
+- **Card↔repo**: cada projeto do board é vinculado a um repo GitLab
+  (`link_repo`, URL interna) — cards herdam o repo do projeto
+- Falhas (propose/apply/archive) movem o card de volta ao **backlog** com
+  tag `falhou:<fase>` e comentário de erro; v1 processa um card por vez e
+  achados critical no MR são escalados ao humano (sem auto-fix)
+
 ## Notas de implementação
 
 - **Imagem do buildkitd**: `apps/buildkitd:v0.34.2-rootless-idtools` é uma
