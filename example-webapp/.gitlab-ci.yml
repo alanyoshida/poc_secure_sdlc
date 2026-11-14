@@ -1,0 +1,63 @@
+# Pipeline da webapp (change gitops-deploy): gate -> build -> chart -> gitops
+stages:
+  - security-gate
+  - build
+  - chart
+  - gitops
+
+variables:
+  REPO_URL_INTERNAL: "http://gitlab-webservice-default.gitlab.svc.cluster.local:8181/root/webapp.git"
+  CHARTMUSEUM_URL: "http://chartmuseum.cicd.svc.cluster.local:8080"
+  GATE_POLL_INTERVAL: "10"
+  GATE_POLL_TIMEOUT: "300"
+
+security-gate:
+  stage: security-gate
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl jq >/dev/null
+  script:
+    - sh ci/gate-poll.sh "$REPO_URL_INTERNAL" "$CI_COMMIT_SHA"
+
+build:
+  stage: build
+  image: docker:27.5.1
+  before_script:
+    - export DOCKER_CONFIG="$HOME/.docker"
+    - |
+      mkdir -p "$DOCKER_CONFIG"
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$HARBOR_REGISTRY" "$HARBOR_REGISTRY_AUTH" > "$DOCKER_CONFIG/config.json"
+    - docker buildx create --name remote --driver remote tcp://buildkitd.cicd.svc.cluster.local:1234
+  script:
+    - docker buildx build --builder remote --push -t "$HARBOR_REGISTRY/apps/webapp:$CI_COMMIT_SHORT_SHA" .
+
+chart:
+  stage: chart
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache helm curl >/dev/null
+  script:
+    - sh $CI_PROJECT_DIR/ci/release-chart.sh
+  after_script:
+    - cd $CI_PROJECT_DIR
+    - git config user.name "ci-bot"
+    - git config user.email "ci-bot@poc.local"
+    - git add chart/webapp/Chart.yaml chart/webapp/values.yaml
+    - git commit -m "release webapp [skip ci]" || echo "nada a commitar"
+    - git push origin HEAD:main || echo "push do bump pulado"
+
+gitops:
+  stage: gitops
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache git >/dev/null
+  script:
+    - git clone --quiet "http://oauth2:$GITOPS_TOKEN@$(echo $GITLAB_URL | sed 's|.*://||')/root/gitops.git" /tmp/gitops
+    - cd /tmp/gitops
+    - git fetch origin main
+    - NEW_VERSION=$(git show origin/main:chart/webapp/Chart.yaml | grep '^version:' | awk '{print $2}')
+    - echo "versao: $NEW_VERSION"
+    - sed -i.bak "s/targetRevision: .*/targetRevision: \"$NEW_VERSION\"/" apps/webapp.yaml && rm -f apps/webapp.yaml.bak
+    - git add apps/webapp.yaml
+    - git diff --cached --quiet && echo "sem mudanca de versao" || git commit -m "release webapp $NEW_VERSION"
+    - git push origin main || echo "push falhou"

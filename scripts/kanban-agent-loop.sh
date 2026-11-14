@@ -149,12 +149,16 @@ while true; do
     set -u
     git -C "$WORKSPACE" fetch origin main >/dev/null 2>&1 || true
     if [ "$OC_EXIT" != "0" ] || ! git -C "$WORKSPACE" cat-file -e "origin/main:openspec/changes/$CHANGE_NAME/proposal.md" 2>/dev/null; then
-      MSG=$(sanitize "$(tail -2 /tmp/phase.log)")
+      MSG=$(sanitize "$(tail -6 /tmp/phase.log)" | cut -c1-900)
       fail_card "$CARD_ID" "propose" "$MSG"
       continue
     fi
-    RESUMO=$(sanitize "$(head -30 "$WORKSPACE/openspec/changes/$CHANGE_NAME/proposal.md" 2>/dev/null)")
-    mcp_add_comment "$CARD_ID" "**Proposta [$CHANGE_NAME]**\\n\\n$RESUMO\\n\\nComente **/aprovado** para autorizar a implementacao."
+    # comentario com o proposal.md COMPLETO (markdown; o mcp_add_comment
+    # preserva as quebras de linha via json.dumps)
+    RESUMO=$(cat "$WORKSPACE/openspec/changes/$CHANGE_NAME/proposal.md" 2>/dev/null)
+    mcp_add_comment "$CARD_ID" "**Proposta [$CHANGE_NAME]** (commit na main; comente **/aprovado** para implementar)
+
+$RESUMO"
     mcp update_task "{\"id\":\"$CARD_ID\",\"status\":\"review\",\"tags\":\"proposta-publicada,change:$CHANGE_NAME\"}" >/dev/null
     log "proposta publicada no $CARD_ID ($CHANGE_NAME)"
   done
@@ -182,7 +186,7 @@ while true; do
     set -u
     git -C "$WORKSPACE" fetch origin >/dev/null 2>&1 || true
     if [ "$OC_EXIT" != "0" ] || ! git -C "$WORKSPACE" ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
-      MSG=$(sanitize "$(tail -2 /tmp/phase.log)")
+      MSG=$(sanitize "$(tail -6 /tmp/phase.log)" | cut -c1-900)
       fail_card "$CARD_ID" "apply" "$MSG"
       continue
     fi
@@ -219,7 +223,7 @@ while true; do
     if [ "$OC_EXIT" != "0" ] \
        || [ -n "$(git -C "$WORKSPACE" ls-tree "origin/main" "openspec/changes/$CHANGE_NAME" 2>/dev/null)" ] \
        || ! git -C "$WORKSPACE" ls-tree -r "origin/main" "openspec/changes/archive/" 2>/dev/null | grep -q "$CHANGE_NAME"; then
-      MSG=$(sanitize "$(tail -2 /tmp/phase.log)")
+      MSG=$(sanitize "$(tail -6 /tmp/phase.log)" | cut -c1-900)
       fail_card "$CARD_ID" "archive" "$MSG"
       continue
     fi

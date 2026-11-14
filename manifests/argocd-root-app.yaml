@@ -1,0 +1,22 @@
+# App-of-apps: o ArgoCD observa o repo root/gitops (path apps/) e cria
+# Applications filhos automaticamente (change gitops-deploy)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181/root/gitops.git
+    targetRevision: main
+    path: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: false
+    syncOptions:
+      - ServerSideApply=true

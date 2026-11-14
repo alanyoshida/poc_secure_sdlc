@@ -1,0 +1,20 @@
+replicaCount: 1
+
+image:
+  repository: harbor.harbor.svc.cluster.local/apps/webapp
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: harbor-pull-webapps
+
+service:
+  type: ClusterIP
+  port: 80
+
+probes:
+  path: /
+  port: 80
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3

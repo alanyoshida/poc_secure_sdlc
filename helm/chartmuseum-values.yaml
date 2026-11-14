@@ -1,0 +1,17 @@
+# ChartMuseum no cluster (change gitops-deploy): repositorio Helm dos
+# pipelines. API aberta in-cluster (push do CI via POST /api/charts e
+# consumo pelo ArgoCD); storage local no PVC.
+env:
+  open:
+    DISABLE_API: false
+    ALLOW_OVERWRITE: true
+persistence:
+  enabled: true
+  size: 1Gi
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+service:
+  type: ClusterIP
+  externalPort: 8080

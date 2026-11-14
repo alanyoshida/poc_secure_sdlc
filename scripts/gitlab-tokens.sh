@@ -88,4 +88,15 @@ else
     --from-literal=token="$AGENT" --from-literal=user=root \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 fi
+# --- gitops-writer (pipeline comita a subida de versao no repo GitOps) ---
+if GITOPS=$(secret_value gitops-writer-token token) && [ -n "$GITOPS" ] && token_valid "$GITOPS"; then
+  echo "gitops-writer-token: reutilizando PAT valido"
+else
+  echo "gitops-writer-token: criando PAT"
+  GITOPS=$(create_pat 'gitops-writer' "['api', 'write_repository']" 30)
+  [ -n "$GITOPS" ] || { echo "falha ao criar PAT gitops-writer"; exit 1; }
+  kubectl create secret generic gitops-writer-token -n cicd \
+    --from-literal=token="$GITOPS" --from-literal=user=root \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+fi
 echo "tokens do GitLab prontos"

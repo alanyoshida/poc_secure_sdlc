@@ -1,0 +1,39 @@
+# ArgoCD no cluster (change gitops-deploy)
+# GitOps: observa o repo root/gitops (app-of-apps) e consome charts do
+# ChartMuseum. HTTP na PoC (UI via port-forward); credenciais em Secrets.
+configs:
+  params:
+    server.insecure: true
+  cm:
+    # registro declarativo do repo GitOps (credencial via Secret ref)
+    repositories: |
+      - url: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181/root/gitops
+        username: root
+        passwordSecret:
+          name: argocd-gitops-auth
+          key: token
+  helm:
+    repositories:
+      - name: chartmuseum
+        url: http://chartmuseum.cicd.svc.cluster.local:8080
+applicationSet:
+  enabled: false   # Applications plain via app-of-apps (design D3)
+dex:
+  enabled: false
+notifications:
+  enabled: false
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+repoServer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi

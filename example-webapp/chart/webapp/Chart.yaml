@@ -1,0 +1,6 @@
+apiVersion: v2
+name: webapp
+description: Servidor web nginx da PoC (deploy via ArgoCD a partir do ChartMuseum)
+type: application
+version: 0.1.0
+appVersion: "1.0"
