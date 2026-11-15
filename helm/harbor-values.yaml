@@ -1,17 +1,29 @@
 # Harbor para a PoC (ver design.md D6)
-# Sem TLS: trafego restrito ao cluster. externalURL aponta para o nome
-# interno para que o realm de token do registry funcione in-cluster
-# (o no do kind resolve via /etc/hosts - ver `make node-hosts`).
+# HTTP continua sendo o caminho usado por build/push/pull e pelo realm de
+# token (externalURL fica http) - nada muda para esses clientes.
+# TLS adicionado só porque o Kyverno (change image-signing-enforcement,
+# design D5) sempre tenta HTTPS ao resolver a imagem para verificar a
+# assinatura cosign, sem fallback para HTTP; cert self-signed (certSource
+# auto) é suficiente porque o Kyverno pula a validação do certificado
+# (allowInsecureRegistry). externalURL aponta para o nome interno para
+# que o realm de token do registry funcione in-cluster (o no do kind
+# resolve via /etc/hosts - ver `make node-hosts`).
 expose:
   type: nodePort
   tls:
-    enabled: false
+    enabled: true
+    certSource: auto
+    auto:
+      commonName: "harbor.harbor.svc.cluster.local"
   nodePort:
     name: harbor
     ports:
       http:
         port: 80
         nodePort: 30002
+      https:
+        port: 443
+        nodePort: 30004
 
 externalURL: http://harbor-core.harbor.svc.cluster.local
 harborAdminPassword: Harbor12345

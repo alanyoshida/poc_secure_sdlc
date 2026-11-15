@@ -1,6 +1,8 @@
 # RBAC dos job pods do runner (executor kubernetes, design D3)
 # A ServiceAccount permite que o job de gate consulte o status dos
-# Workflows do Argo via API do Kubernetes, sem credenciais extras.
+# Workflows do Argo via API do Kubernetes, sem credenciais extras, e que
+# o job de assinatura (change image-signing-enforcement) leia apenas o
+# Secret cosign-key-pair via provider k8s:// do cosign.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -16,6 +18,10 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["workflows"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["cosign-key-pair"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

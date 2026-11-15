@@ -3,27 +3,20 @@
 Evoluções planejadas para a PoC de SDLC seguro, fora do escopo da change
 atual (ver `openspec/changes/setup-secure-sdlc-poc/design.md`, decisões D7 e D8).
 
-## 1. Assinatura de imagens com cosign
+## 1. Assinatura de imagens com cosign — IMPLEMENTADO
 
-Disparada automaticamente quando o scan do Trivy conclui **limpo**:
+Ver change `image-signing-enforcement` (specs em
+`openspec/specs/image-signing-enforcement/`). A versão implementada
+difere da ideia original deste roadmap: a assinatura acontece
+**incondicionalmente após o push** (estágio `sign` no próprio pipeline),
+não disparada por webhook do Harbor condicionado ao resultado do Trivy
+limpo. Kyverno faz o enforcement, restrito ao namespace `webapps`. Ver
+README (seção "Assinatura de imagens") para o funcionamento atual.
 
-```
-push imagem -> Harbor scanOnPush -> Trivy: sem vulnerabilidades
-            -> webhook do Harbor -> Argo Events (EventSource harbor)
-            -> Workflow "sign" -> cosign sign-blob/sign
-            -> assinatura anexada ao registry (tag .signature)
-```
-
-Peças necessárias:
-
-- EventSource do Harbor apontando para o evento de scan concluído (o Harbor
-  já emite webhooks por projeto; o projeto `apps` tem a aba Webhooks)
-- Sensor que filtra o payload (scan com `Total > 0` não assina) e instancia
-  o Workflow de assinatura
-- Chave do cosign em Secret do Kubernetes (key-pair gerado no bootstrap;
-  política de rotação fora da PoC)
-- Política de admissão no cluster (ex.: Kyverno) para bloquear pods que
-  usem imagens não assinadas — camada de enforcement
+Evolução ainda não feita, registrada aqui: condicionar a assinatura ao
+resultado do scan do Trivy (webhook do Harbor → Argo Events → só assina
+se `Total == 0` vulnerabilidades) — hoje o Trivy continua informativo,
+sem bloquear nada.
 
 O desenho já prevê o encaixe: o Argo Events é o barramento de eventos da
 plataforma; o novo fluxo apenas adiciona um EventSource + Sensor + Template.

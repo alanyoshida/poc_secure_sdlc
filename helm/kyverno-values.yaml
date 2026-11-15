@@ -1,0 +1,21 @@
+# Kyverno no cluster (change image-signing-enforcement)
+# Versao do chart fixada em 3.9.2 (Kyverno v1.19.2) deliberadamente: a
+# 3.10.0/v1.20.0 removeu a execucao de ClusterPolicy legada do tipo
+# verifyImages (so aceita a nova ImageValidatingPolicy em CEL) - ver
+# design.md D5.
+# Só o admission-controller é necessário para verifyImages (checagem na
+# admissão do pod); background/cleanup/reports-controller não são usados
+# nesta PoC (sem policies de generate/mutate-existing/ttl/relatórios) -
+# desligados para economizar RAM, mesma postura "enxuta" do resto do
+# ambiente (GitLab CE sem Prometheus/Grafana/KAS).
+backgroundController:
+  enabled: false
+cleanupController:
+  enabled: false
+reportsController:
+  enabled: false
+# Harbor fala HTTP sem TLS nesta PoC (mesma postura do resto do cluster) -
+# sem isto o verifyImages tenta https://harbor.../v2/ e trava em timeout.
+features:
+  registryClient:
+    allowInsecure: true

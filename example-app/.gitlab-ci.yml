@@ -6,6 +6,7 @@ stages:
   - security-gate
   - build
   - push
+  - sign
 
 variables:
   # repo de clone pelo Service interno (a external_url nip.io nao resolve no cluster)
@@ -45,3 +46,14 @@ push:
   stage: push
   script:
     - docker buildx build --builder remote --push -t "$HARBOR_REGISTRY/apps/demo-app:$CI_COMMIT_SHORT_SHA" .
+
+sign:
+  stage: sign
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache cosign >/dev/null
+    - export DOCKER_CONFIG="$HOME/.docker"
+    - mkdir -p "$DOCKER_CONFIG"
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$HARBOR_REGISTRY" "$HARBOR_REGISTRY_AUTH" > "$DOCKER_CONFIG/config.json"
+  script:
+    - cosign sign --key k8s://cicd/cosign-key-pair --allow-http-registry --yes "$HARBOR_REGISTRY/apps/demo-app:$CI_COMMIT_SHORT_SHA"

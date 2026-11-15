@@ -33,6 +33,10 @@ A narrativa de segurança em camadas:
 | Gitleaks | Scan de secrets no repositório | v8.24.3 |
 | BuildKit (rootless) | Build de imagens sem privilégios, cache em PVC | v0.34.2 |
 | Harbor | Registry com RBAC + Trivy (scan de vulnerabilidades) | chart 1.19.4 (Harbor 2.15) |
+| ArgoCD | GitOps: sincroniza deploys a partir do repo `root/gitops` | chart 10.17.0 |
+| ChartMuseum | Repositório Helm dos charts publicados pelo pipeline | chart 3.10.4 |
+| cosign | Assinatura das imagens publicadas no Harbor | pacote Alpine `cosign-2.2.1-r5` |
+| Kyverno | Admission controller: só admite em `webapps` imagens assinadas | chart 3.9.2 (Kyverno v1.19.2) |
 
 ## Requisitos
 
@@ -60,6 +64,7 @@ componentes sem duplicar nada. O primeiro boot do GitLab leva vários minutos.
 | GitLab | NodePort do webservice — ver `make urls` | `root` / senha em `secret/gitlab-gitlab-initial-root-password` (ns `gitlab`) |
 | Harbor | NodePort 30002 do nó kind — ver `make urls` | `admin` / `Harbor12345` (fixada em `helm/harbor-values.yaml`) |
 | Argo Workflows | `kubectl -n cicd port-forward svc/argo-workflows-server 2746:2746` → http://127.0.0.1:2746 | sem login (authMode `server`) |
+| ArgoCD | `kubectl -n argocd port-forward svc/argocd-server 8080:443` → https://localhost:8080 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
 
 Credenciais de máquina ficam em **Secrets do Kubernetes** (ns `cicd`) — nunca
 em código, manifests commitados ou logs:
@@ -68,8 +73,11 @@ em código, manifests commitados ou logs:
 |---|---|
 | `gitlab-admin-token` | PAT root (escopo `api`) usado pelo bootstrap e pelo setup de CI |
 | `gitlab-repo-read` | PAT root (escopo `read_repository`) usado pelo Workflow do gate para clonar |
+| `gitops-writer-token` | PAT root (escopo `api`+`write_repository`) usado pelo pipeline para comitar a subida de versão em `root/gitops` e pelo ArgoCD para ler o repo |
 | `harbor-robot` | credenciais da robot account do pipeline |
 | `harbor-pull` | imagePullSecret (dockerconfigjson) para pods puxarem imagens privadas |
+| `harbor-pull-webapps` (ns `webapps`, cópia em `kyverno`) | imagePullSecret do Harbor para os deploys do GitOps e para o Kyverno ler assinaturas |
+| `cosign-key-pair` | par de chaves cosign (`cosign.key`/`cosign.pub`/`cosign.password`) usado para assinar imagens e para o Kyverno verificar |
 
 No GitLab, o repositório `root/demo-app` usa as variáveis de CI
 `HARBOR_REGISTRY` e `HARBOR_REGISTRY_AUTH` (base64 de `usuario:senha`,
@@ -97,6 +105,8 @@ Repositório de aplicação exemplo: **`root/demo-app`** (fonte canônico em
    `harbor.harbor.svc.cluster.local/apps/demo-app:$CI_COMMIT_SHORT_SHA`; o
    Harbor dispara o scan Trivy automaticamente (projeto `apps` com
    `auto_scan`).
+4. **`sign`** — assina a tag recém-publicada com cosign (ver
+   [Assinatura de imagens](#assinatura-de-imagens-cosign-e-enforcement-kyverno)).
 
 O pull interno das imagens por pods do cluster usa o mirror HTTP configurado
 no containerd do kind (`containerdConfigPatches` em [`kind.yaml`](kind.yaml))
@@ -181,6 +191,72 @@ backlog (ideias, agente ignora) --mover--> todo --propose--> review
   tag `falhou:<fase>` e comentário de erro; v1 processa um card por vez e
   achados critical no MR são escalados ao humano (sem auto-fix)
 
+### Entrega contínua GitOps (ArgoCD + ChartMuseum)
+
+Depois do merge, a aplicação exemplo **`root/webapp`** (fonte canônico em
+[`example-webapp/`](example-webapp/)) completa o ciclo até o deploy no
+próprio kind, sem ação manual:
+
+```
+merge na main do webapp
+  -> pipeline: gate -> build (push no Harbor) -> sign (cosign)
+             -> chart (bump de versão + helm package + push no ChartMuseum)
+             -> gitops (commit atualizando targetRevision em root/gitops)
+  -> ArgoCD detecta o commit (app-of-apps "root" observa root/gitops/apps/)
+  -> Application "webapp" sincroniza a nova versão do chart
+  -> pod nginx fica Ready no namespace webapps, com a imagem assinada
+```
+
+- **Acompanhar o deploy**: UI do ArgoCD (acesso na tabela acima) mostra o
+  app-of-apps `root` e o Application filho `webapp`, com status de sync e
+  health; ou `kubectl get applications -n argocd`
+- **Criar uma nova app GitOps**: adicione um manifesto `Application` em
+  `apps/<nome>.yaml` no repositório `root/gitops` (mesmo formato de
+  [`example-gitops/apps/webapp.yaml`](example-gitops/apps/webapp.yaml)) — o
+  app-of-apps adota automaticamente, sem reconfigurar o ArgoCD
+- **Drift**: o `syncPolicy.automated.selfHeal: true` reverte qualquer edição
+  manual nos recursos deployados, de volta ao estado do repositório GitOps
+- Repositório GitOps semeado pelo bootstrap a partir de
+  [`example-gitops/`](example-gitops/) (mesmo mecanismo de sincronização de
+  `example-app`/`example-webapp`)
+
+### Assinatura de imagens (cosign) e enforcement (Kyverno)
+
+Toda imagem publicada pelos pipelines (`demo-app` e `webapp`) é assinada
+pelo estágio `sign` logo após o push, com a chave do Secret
+`cosign-key-pair` (ns `cicd`):
+
+```bash
+cosign sign --key k8s://cicd/cosign-key-pair --allow-http-registry --yes \
+  harbor.harbor.svc.cluster.local/apps/<nome>:<tag>
+```
+
+- **Ver a assinatura no Harbor**: a tag assinada mostra o accessory
+  `signature.cosign` na UI (aba da tag) ou via API:
+  `GET /api/v2.0/projects/apps/repositories/<nome>/artifacts?with_accessory=true`
+- **Onde é exigida**: uma `ClusterPolicy` do Kyverno
+  ([`manifests/cosign-verify-policy.yaml`](manifests/cosign-verify-policy.yaml))
+  só admite pods no namespace **`webapps`** cuja imagem (`apps/*`) verifique
+  contra a chave pública do mesmo Secret — mutação automática fixa a
+  imagem por digest. Fora de `webapps` (GitLab, Harbor, ArgoCD,
+  ChartMuseum, BuildKit, etc.) nada é verificado — são imagens de
+  terceiros, não assinadas por este pipeline
+- **Diagnosticar um pod rejeitado**: o evento de admissão (ex.:
+  `kubectl describe replicaset -n webapps <nome>` ou o próprio erro do
+  `kubectl apply`/ArgoCD) mostra o motivo exato
+  (`failed to verify image ...: no signatures found`, por exemplo)
+- **Harbor fala HTTPS também (porta 443, cert self-signed)**: só porque o
+  verificador do Kyverno exige TLS para resolver a imagem — build, push e
+  o próprio `cosign sign` continuam em HTTP puro (porta 80), sem mudança
+  nenhuma. `scripts/harbor-dual-scheme.sh` mantém as duas portas
+  funcionando após cada `helm upgrade` do Harbor (ver Notas de
+  implementação)
+- **Depende de internet**: tanto a assinatura (`cosign sign`) quanto a
+  verificação pelo Kyverno usam o transparency log público do Sigstore
+  (`rekor.sigstore.dev`) — sem essa dependência, o Kyverno 3.9.2 não tem
+  como verificar uma assinatura por chave estática. Sem internet, novos
+  pods em `webapps` ficam bloqueados (fail-closed) até a conexão voltar
+
 ## Notas de implementação
 
 - **Imagem do buildkitd**: `apps/buildkitd:v0.34.2-rootless-idtools` é uma
@@ -191,11 +267,25 @@ backlog (ideias, agente ignora) --mover--> todo --propose--> review
   efetivo; volumes k8s são montados `nosuid`, então o ajuste tem que estar
   no filesystem da imagem. O modo rootless funciona (pod uid 1000, sem
   `privileged`, sem socket de runtime) — o fallback buildah não foi preciso.
-- **Harbor em HTTP**: tráfego restrito ao cluster (design D6). O nome
-  `harbor.harbor.svc.cluster.local` é resolvido no nó via `/etc/hosts`
-  (`make node-hosts`) porque o containerd não usa CoreDNS. A robot account é
-  de sistema (`robot$ci`, escopo projeto `apps`, somente push+pull) e é
-  recriada a cada bootstrap para girar o secret.
+- **Harbor em HTTP (+ HTTPS self-signed para o Kyverno)**: build/push/pull
+  seguem em HTTP puro, tráfego restrito ao cluster (design D6 de
+  `setup-secure-sdlc-poc`). O nome `harbor.harbor.svc.cluster.local` é
+  resolvido no nó via `/etc/hosts` (`make node-hosts`) porque o containerd
+  não usa CoreDNS. A robot account é de sistema (`robot$ci`, escopo
+  projeto `apps`, somente push+pull) e é recriada a cada bootstrap para
+  girar o secret. O chart do Harbor, com `expose.tls.enabled: true`
+  (adicionado pela change `image-signing-enforcement` — só para o Kyverno
+  verificar assinatura, ver design D6/D7 dessa change), redireciona a
+  porta HTTP para HTTPS por padrão, sem nenhum value para desligar isso;
+  `scripts/harbor-dual-scheme.sh` reescreve o ConfigMap `harbor-nginx`
+  (fora do Helm) para restaurar as duas portas em paralelo — precisa ser
+  chamado de novo depois de qualquer `helm upgrade harbor` manual (o
+  bootstrap já faz isso).
+- **Kyverno bloqueia upgrade do próprio chart com `ClusterPolicy` legada
+  já aplicada** (mesmo na mesma versão 3.9.2): `helm upgrade --install
+  kyverno` precisa de `--set
+  upgrade.acknowledgeLegacyPoliciesNotEnforced=true` a partir da segunda
+  execução do bootstrap, senão falha.
 - **Scan de histórico**: o gate roda `gitleaks git` no clone completo — um
   secret removido do HEAD ainda reprova o pipeline (comportamento desejado).
   Repos de teste com secrets falsos precisam da história reescrita para
@@ -206,5 +296,5 @@ backlog (ideias, agente ignora) --mover--> todo --propose--> review
 
 ## Planejamento e roadmap
 
-- Artefatos OpenSpec: [`openspec/changes/setup-secure-sdlc-poc/`](openspec/changes/setup-secure-sdlc-poc/) (proposal, design D1–D8, specs, tasks)
+- Artefatos OpenSpec: [`openspec/changes/archive/`](openspec/changes/archive/) (uma pasta por change implementada — proposal, design, specs, tasks); change em andamento, se houver, em [`openspec/changes/`](openspec/changes/)
 - Roadmap pós-PoC: [`docs/ROADMAP.md`](docs/ROADMAP.md)

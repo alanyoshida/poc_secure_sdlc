@@ -15,7 +15,7 @@ sed -i.bak "s/^  tag: .*/  tag: $IMAGE_TAG/" "$CHART_DIR/values.yaml" && rm -f "
 
 mkdir -p "$CHART_DIR/dist"
 helm package "$CHART_DIR" -d "$CHART_DIR/dist" >/dev/null
-TGZ=$(ls "$CHART_DIR/dist/*.tgz" | head -1)
+TGZ=$(ls $CHART_DIR/dist/*.tgz | head -1)
 echo "publicando $TGZ no ChartMuseum"
 curl -sf --data-binary "@$TGZ" "$CHARTMUSEUM_URL/api/charts" >/dev/null
 echo "CHART_VERSION=$NEW"

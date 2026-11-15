@@ -1,0 +1,106 @@
+# ClusterPolicy do Kyverno (change image-signing-enforcement)
+# verifyImages restrito ao namespace webapps: só admite pods cuja imagem
+# verifique contra a chave publica do par cosign (Secret cosign-key-pair,
+# ns cicd). background:false porque Pods sao imutaveis - nao ha o que
+# reavaliar depois de criados. webhookConfiguration.failurePolicy: Fail
+# (default) mantem a postura fail-closed do restante da plataforma.
+#
+# RBAC: a ServiceAccount do admission-controller do Kyverno (ns kyverno)
+# precisa ler o Secret cosign-key-pair (ns cicd) para resolver a chave
+# publica via "k8s://cicd/cosign-key-pair" - acesso restrito a esse unico
+# Secret, mesma postura de minimo privilegio do RBAC do job de CI.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-cosign-pubkey-read
+  namespace: cicd
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["cosign-key-pair"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kyverno-cosign-pubkey-read
+  namespace: cicd
+subjects:
+  - kind: ServiceAccount
+    name: kyverno-admission-controller
+    namespace: kyverno
+roleRef:
+  kind: Role
+  name: kyverno-cosign-pubkey-read
+  apiGroup: rbac.authorization.k8s.io
+---
+# RBAC: o Kyverno precisa ler o imagePullSecret harbor-pull-webapps (ns
+# webapps) para autenticar no Harbor ao buscar a assinatura - mesmo
+# Secret ja usado pelos pods para o pull da imagem, sem credencial nova.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-harbor-pull-read
+  namespace: webapps
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["harbor-pull-webapps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kyverno-harbor-pull-read
+  namespace: webapps
+subjects:
+  - kind: ServiceAccount
+    name: kyverno-admission-controller
+    namespace: kyverno
+roleRef:
+  kind: Role
+  name: kyverno-harbor-pull-read
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cosign-verify-webapps
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+    # default (10s) nao basta para o cosign resolver TUF + buscar a
+    # assinatura no Harbor; 30s e o maximo aceito pelo Kyverno
+    timeoutSeconds: 30
+  rules:
+    - name: verify-cosign-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - webapps
+      verifyImages:
+        - imageReferences:
+            - "harbor.harbor.svc.cluster.local/apps/*"
+          failureAction: Enforce
+          required: true
+          # mutateDigest:false quebra a verificacao em recursos
+          # controller-owned (Deployment, via regra "autogen" que o
+          # Kyverno gera para Pod): falha com "missing digest" porque a
+          # verificacao exige o digest ja resolvido. mutateDigest:true e
+          # obrigatorio aqui; o drift que isso causa no ArgoCD (live
+          # fica com @sha256, desejado fica so com a tag) e tratado do
+          # lado do ArgoCD via ignoreDifferences (ver
+          # example-gitops/apps/webapp.yaml), nao aqui.
+          mutateDigest: true
+          imageRegistryCredentials:
+            allowInsecureRegistry: true
+            secrets:
+              - "harbor-pull-webapps"
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: "k8s://cicd/cosign-key-pair"

@@ -26,9 +26,9 @@
 ## 5. Verificação ponta a ponta
 
 - [x] 5.1 Fluxo v1: pipeline da webapp roda os 4 estágios (gate, build, chart, gitops) e verifica: imagem `apps/webapp:<sha>` no Harbor, chart `<versão>` no ChartMuseum, commit de release no repo GitOps, ArgoCD sincroniza e o pod nginx fica Ready no namespace webapps com probes funcionando
-- [ ] 5.2 Fluxo v2 (nova versão): mudança na página + merge → pipeline publica v+1 → ArgoCD faz rollout (nova imagem no pod) sem ação manual
+- [x] 5.2 Fluxo v2 (nova versão): mudança na página + merge → pipeline publica v+1 → ArgoCD faz rollout (nova imagem no pod) sem ação manual
 - [x] 5.3 Drift: editar manualmente um recurso do deploy no cluster e verificar o ArgoCD reverte para o estado do repo GitOps
-- [ ] 5.4 Falha: card ambíguo no kanban ou pipeline com gate reprovado não gera chart nem deploy (verificar que nenhum commit de release acontece)
+- [x] 5.4 Falha: card ambíguo no kanban ou pipeline com gate reprovado não gera chart nem deploy (verificar que nenhum commit de release acontece)
 
 ## Workflow follow-up
 

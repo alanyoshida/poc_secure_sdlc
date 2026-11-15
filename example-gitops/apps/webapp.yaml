@@ -22,3 +22,14 @@ spec:
       prune: false
     syncOptions:
       - CreateNamespace=true
+  # o Kyverno (change image-signing-enforcement) reescreve a imagem do
+  # Deployment para a forma por digest na admissao (mutateDigest:true,
+  # exigido para a verificacao funcionar em Deployment/autogen) -
+  # diferente do manifesto declarado (so a tag); sem isto o ArgoCD
+  # ficaria OutOfSync para sempre e o selfHeal reaplicaria a cada poll,
+  # reiniciando o pod a cada ~3min
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/template/spec/containers/0/image
