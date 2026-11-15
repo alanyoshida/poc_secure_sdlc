@@ -1,6 +1,6 @@
 # ArgoCD no cluster (change gitops-deploy)
 # GitOps: observa o repo root/gitops (app-of-apps) e consome charts do
-# ChartMuseum. HTTP na PoC (UI via port-forward); credenciais em Secrets.
+# ChartMuseum. HTTP na PoC; credenciais em Secrets.
 configs:
   params:
     server.insecure: true
@@ -23,6 +23,12 @@ dex:
 notifications:
   enabled: false
 server:
+  # NodePort fixo (como Harbor/GitLab) em vez de port-forward manual;
+  # server.insecure:true acima faz o server falar HTTP puro na 8080,
+  # então basta expor a porta http do Service
+  service:
+    type: NodePort
+    nodePortHttp: 30005
   resources:
     requests:
       cpu: 50m

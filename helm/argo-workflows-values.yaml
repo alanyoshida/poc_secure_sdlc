@@ -6,9 +6,12 @@ controller:
     - cicd
 
 server:
-  # PoC local: sem SSO, acesso restrito ao port-forward do host
+  # PoC local: sem SSO
   authMode: server
   insecure: true
+  # NodePort fixo (como Harbor/GitLab/ArgoCD) em vez de port-forward manual
+  serviceType: NodePort
+  serviceNodePort: 30006
 
 # Sem repositorio de artefatos: o gate le status via API e o scan imprime
 # no stdout do container; archiveLogs fica desligado na PoC.

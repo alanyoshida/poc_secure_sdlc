@@ -63,8 +63,8 @@ componentes sem duplicar nada. O primeiro boot do GitLab leva vários minutos.
 |---|---|---|
 | GitLab | NodePort do webservice — ver `make urls` | `root` / senha em `secret/gitlab-gitlab-initial-root-password` (ns `gitlab`) |
 | Harbor | NodePort 30002 do nó kind — ver `make urls` | `admin` / `Harbor12345` (fixada em `helm/harbor-values.yaml`) |
-| Argo Workflows | `kubectl -n cicd port-forward svc/argo-workflows-server 2746:2746` → http://127.0.0.1:2746 | sem login (authMode `server`) |
-| ArgoCD | `kubectl -n argocd port-forward svc/argocd-server 8080:443` → https://localhost:8080 | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| Argo Workflows | NodePort 30006 do nó kind — ver `make urls` | sem login (authMode `server`) |
+| ArgoCD | NodePort 30005 do nó kind (HTTP, `server.insecure`) — ver `make urls` | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
 
 Credenciais de máquina ficam em **Secrets do Kubernetes** (ns `cicd`) — nunca
 em código, manifests commitados ou logs:

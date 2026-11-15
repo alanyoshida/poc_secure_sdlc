@@ -47,6 +47,9 @@ urls:
 	@NODE_IP=$$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $(NODE)); \
 	GL_PORT=$$(kubectl get svc gitlab-webservice-default -n gitlab -o jsonpath='{.spec.ports[?(@.port==8181)].nodePort}' 2>/dev/null); \
 	H_PORT=$$(kubectl get svc harbor -n harbor -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null); \
-	echo "GitLab:  http://$$NODE_IP:$$GL_PORT  (root / senha: kubectl get secret gitlab-gitlab-initial-root-password -n gitlab -o jsonpath='{.data.password}' | base64 -d)"; \
-	echo "Harbor:  http://$$NODE_IP:$$H_PORT  (admin / Harbor12345)"; \
-	echo "Argo UI: kubectl -n cicd port-forward svc/argo-workflows-server 2746:2746"
+	AC_PORT=$$(kubectl get svc argocd-server -n argocd -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null); \
+	AW_PORT=$$(kubectl get svc argo-workflows-server -n cicd -o jsonpath='{.spec.ports[?(@.port==2746)].nodePort}' 2>/dev/null); \
+	echo "GitLab:   http://$$NODE_IP:$$GL_PORT  (root / senha: kubectl get secret gitlab-gitlab-initial-root-password -n gitlab -o jsonpath='{.data.password}' | base64 -d)"; \
+	echo "Harbor:   http://$$NODE_IP:$$H_PORT  (admin / Harbor12345)"; \
+	echo "ArgoCD:   http://$$NODE_IP:$$AC_PORT  (admin / senha: kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d)"; \
+	echo "Argo UI:  http://$$NODE_IP:$$AW_PORT  (sem login)"
