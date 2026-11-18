@@ -1,26 +1,46 @@
 # PoC: Secure SDLC Local
 
-Prova de conceito de um **SDLC seguro de ponta a ponta** rodando inteiramente num cluster Kubernetes local (kind): do push do código até uma imagem de container escaneada, com gate bloqueante de secrets antes do build.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-PoC%20verificada-brightgreen)
+![Kubernetes](https://img.shields.io/badge/kubernetes-1.34%20%28kind%29-326CE5?logo=kubernetes&logoColor=white)
+![GitLab CE](https://img.shields.io/badge/GitLab%20CE-18.11-FC6D26?logo=gitlab&logoColor=white)
+![Harbor](https://img.shields.io/badge/Harbor-2.15-60B932?logo=harbor&logoColor=white)
+![Argo](https://img.shields.io/badge/Argo-Workflows%20%7C%20Events%20%7C%20CD-EF7B4D?logo=argo&logoColor=white)
+![Kyverno](https://img.shields.io/badge/Kyverno-1.19-FF6F00)
+![cosign](https://img.shields.io/badge/signed%20with-cosign-4B32C3?logo=sigstore&logoColor=white)
+![OpenSpec](https://img.shields.io/badge/specs-OpenSpec-black)
 
-**Status: implementado e verificado** — `make bootstrap` sobe o ambiente completo do zero; o pipeline ponta a ponta (push limpo passa, push com secret falha) está validado em `root/demo-app`.
+Prova de conceito de um **SDLC seguro de ponta a ponta** rodando inteiramente num cluster Kubernetes local (kind): do card no board ao deploy, passando por validação de MR (gate de secrets + code review por LLM), build rootless, imagem escaneada e assinada, e entrega GitOps com admissão restrita a imagens assinadas.
+
+**Status: implementado e verificado** — `make bootstrap` sobe o ambiente completo do zero; validados ponta a ponta: o pipeline de `root/demo-app` (push limpo passa, push com secret falha), a validação de MR por webhook, o review de MR por LLM, o agente kanban e a entrega GitOps de `root/webapp` com imagem assinada admitida pelo Kyverno.
 
 ## O fluxo
 
 ```
-push --> GitLab CI --> security-gate --> webhook --> Argo Events --> Workflow gitleaks
-                          | aprovado                     | reprovado: pipeline morre
-                          v
-                       buildx --> BuildKit (rootless) --> push no Harbor
-                                                                |
-                                                          Trivy scan (auto)
+card no Kanzo --> agente (opencode + OpenSpec) --> MR
+                                                   |-- webhook --> gate gitleaks (Argo)
+                                                   '-- webhook --> code review por LLM (inline no MR)
+merge / push --> GitLab CI --> security-gate --> Argo Events --> Workflow gitleaks
+                                  | aprovado                       | reprovado: pipeline morre
+                                  v
+                               buildx --> BuildKit (rootless) --> push no Harbor --> Trivy scan (auto)
+                                                                        |
+                                                                   sign (cosign)
+                                                                        |
+                         (webapp) chart no ChartMuseum --> commit da versão em root/gitops
+                                                                        |
+                                    ArgoCD sync --> Kyverno verifica assinatura --> pod em webapps
 ```
 
 A narrativa de segurança em camadas:
 
+- **Revisão antes do merge** — todo MR dispara o gate de secrets e um code review por LLM publicado inline; achado `critical` reprova o review
 - **Secrets no código** — gitleaks como gate bloqueante antes de qualquer build (fail-closed, scan do histórico completo do repo)
 - **Build sem privilégios** — BuildKit rootless, sem Docker-in-Docker (Kaniko foi descontinuado pelo Google em jun/2025)
-- **Vulnerabilidades no artefato** — Trivy embutido no Harbor, scan automático a cada push (scanOnPush)
-- **Proveniência (roadmap)** — webhook do Trivy → Argo Events → assinatura da imagem com cosign
+- **Vulnerabilidades no artefato** — Trivy embutido no Harbor, scan automático a cada push (scanOnPush; informativo, não bloqueia)
+- **Proveniência** — toda imagem publicada é assinada com cosign logo após o push
+- **Admissão** — Kyverno só admite no namespace `webapps` imagens com assinatura válida (fail-closed)
+- **Entrega auditável** — deploy apenas via GitOps (ArgoCD com `selfHeal`), cada versão é um commit em `root/gitops`
 
 ## Stack
 
@@ -37,6 +57,9 @@ A narrativa de segurança em camadas:
 | ChartMuseum | Repositório Helm dos charts publicados pelo pipeline | chart 3.10.4 |
 | cosign | Assinatura das imagens publicadas no Harbor | pacote Alpine `cosign-2.2.1-r5` |
 | Kyverno | Admission controller: só admite em `webapps` imagens assinadas | chart 3.9.2 (Kyverno v1.19.2) |
+| OpenCodeReview (`ocr`) | Code review de MR por LLM, publicado inline | npm `@alibaba-group/open-code-review@1.13.6` |
+| Kanzo | Board kanban (PVC + MCP HTTP) que alimenta o agente | v0.4.1 |
+| opencode + OpenSpec CLI | Agente que transforma cards em changes OpenSpec e MRs | v1.19.5 / v1.17.0 |
 
 ## Requisitos
 
@@ -49,7 +72,7 @@ A narrativa de segurança em camadas:
 ```bash
 make bootstrap   # cria o cluster e instala TODA a plataforma (idempotente)
 make status      # panorama de nós e pods
-make urls        # endereços de acesso (GitLab, Harbor, Argo)
+make urls        # endereços de acesso (GitLab, Harbor, ArgoCD, Argo Workflows)
 make node-hosts  # mapeia os FQDNs do Harbor no /etc/hosts do nó kind (o bootstrap já roda)
 make teardown    # destrói o cluster inteiro
 ```
@@ -65,6 +88,7 @@ componentes sem duplicar nada. O primeiro boot do GitLab leva vários minutos.
 | Harbor | NodePort 30002 do nó kind — ver `make urls` | `admin` / `Harbor12345` (fixada em `helm/harbor-values.yaml`) |
 | Argo Workflows | NodePort 30006 do nó kind — ver `make urls` | sem login (authMode `server`) |
 | ArgoCD | NodePort 30005 do nó kind (HTTP, `server.insecure`) — ver `make urls` | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| Kanzo | `kubectl -n cicd port-forward deploy/kanzo 4242:4242` → http://localhost:4242 | sem login |
 
 Credenciais de máquina ficam em **Secrets do Kubernetes** (ns `cicd`) — nunca
 em código, manifests commitados ou logs:
@@ -73,7 +97,10 @@ em código, manifests commitados ou logs:
 |---|---|
 | `gitlab-admin-token` | PAT root (escopo `api`) usado pelo bootstrap e pelo setup de CI |
 | `gitlab-repo-read` | PAT root (escopo `read_repository`) usado pelo Workflow do gate para clonar |
-| `gitops-writer-token` | PAT root (escopo `api`+`write_repository`) usado pelo pipeline para comitar a subida de versão em `root/gitops` e pelo ArgoCD para ler o repo |
+| `gitlab-mr-poster` | PAT root (escopo `api`) dedicado a publicar o review da LLM no MR |
+| `kanban-agent-token` | PAT root (escopo `api`+`write_repository`) do agente kanban: push de branch, MR e leitura |
+| `gitops-writer-token` | PAT root (escopo `api`+`write_repository`) usado pelo pipeline para comitar a subida de versão em `root/gitops`; cópia em `argocd-gitops-auth` (ns `argocd`) para o ArgoCD ler o repo |
+| `ocr-llm` / `agent-llm` | endpoint, chave e modelo do LLM do code review e do agente (criados a partir do `.env` local, se existir) |
 | `harbor-robot` | credenciais da robot account do pipeline |
 | `harbor-pull` | imagePullSecret (dockerconfigjson) para pods puxarem imagens privadas |
 | `harbor-pull-webapps` (ns `webapps`, cópia em `kyverno`) | imagePullSecret do Harbor para os deploys do GitOps e para o Kyverno ler assinaturas |
@@ -128,8 +155,9 @@ externa do projeto.
   nos parâmetros; o scan é rápido (~20s).
 - **Limitação atual**: o veredito não é postado de volta no MR (commit
   status/nota) — o fluxo de scan usa somente o token `read_repository`
-  (privilégio mínimo); publicar resultados está no roadmap
-  ([`docs/ROADMAP.md`](docs/ROADMAP.md)) junto da assinatura com cosign.
+  (privilégio mínimo); publicar o veredito do gate no MR está no roadmap
+  ([`docs/ROADMAP.md`](docs/ROADMAP.md)). O code review por LLM (abaixo)
+  já publica no MR, com token próprio.
 - Eventos `merge`, `close` e `approval` não disparam scan.
 
 ### Code review de MR por LLM (OpenCodeReview)
@@ -159,7 +187,8 @@ kubectl create secret generic ocr-llm -n cicd \
   achado `critical` (`OCR_FAIL_ON_SEVERITY`); demais severidades são
   consultivas.
 - **Credenciais segregadas**: LLM no Secret `ocr-llm`; publicação usa o PAT
-  dedicado `mr-review-poster` (escopo `api`, recriado pelo bootstrap); o
+  dedicado `mr-review-poster` (Secret `gitlab-mr-poster`, escopo `api`,
+  recriado pelo bootstrap); o
   clone continua no token `read_repository`.
 - **Custo**: cada review consome tokens do provedor configurado; reviews só
   disparam em eventos relevantes de MR (mesmo filtro do gate).
@@ -296,5 +325,10 @@ cosign sign --key k8s://cicd/cosign-key-pair --allow-http-registry --yes \
 
 ## Planejamento e roadmap
 
-- Artefatos OpenSpec: [`openspec/changes/archive/`](openspec/changes/archive/) (uma pasta por change implementada — proposal, design, specs, tasks); change em andamento, se houver, em [`openspec/changes/`](openspec/changes/)
+- Artefatos OpenSpec: [`openspec/changes/archive/`](openspec/changes/archive/) (uma pasta por change implementada e arquivada — proposal, design, specs, tasks) e specs consolidados em [`openspec/specs/`](openspec/specs/)
+- Changes ainda fora do arquivo ficam em [`openspec/changes/`](openspec/changes/) — hoje `gitops-deploy` e `image-signing-enforcement` (implementadas, aguardando archive)
 - Roadmap pós-PoC: [`docs/ROADMAP.md`](docs/ROADMAP.md)
+
+## Licença
+
+Distribuído sob a licença MIT — ver [`LICENSE`](LICENSE).
